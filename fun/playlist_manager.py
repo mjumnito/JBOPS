@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 """
 Description: Create and share playlists based on Most Popular TV/Movies from Tautulli
                 and Aired this day in history.
@@ -43,7 +46,7 @@ optional arguments:
 
  Example:
     Use with cron or task to schedule runs
-    
+
  Create Aired Today Playlist from Movies and TV Shows libraries for admin user
     python playlist_manager.py --jbop historyToday --libraries Movies "TV Shows" --action add
 
@@ -61,16 +64,29 @@ optional arguments:
 
  Create 10 Most Popular Movies (60 days) Playlist and share to users bob and Black Twin
     python playlist_manager.py --jbop popularMovies --action add --users bob "Black Twin" --days 60 --top 10
-    
+
  Show 5 Most Popular TV Shows (30 days) Playlist
     python playlist_manager.py --jbop popularTv --action show
-    
+
  Show all users current playlists
     python playlist_manager.py --action show --allUsers
-    
+
  Share existing admin Playlists "My Custom Playlist" and "Another Playlist" with all users
     python playlist_manager.py --action share --allUsers --playlists "My Custom Playlist" "Another Playlist"
-    
+
+ Search and Filter;
+
+ metadata_field_name = title, summary, etc.
+
+ --search {metadata_field_name}=value
+    search through metadata field for existence of value.
+
+ --search {metadata_field_name}=value1,value2,*
+    search through metadata field for existence of values.
+        *comma separated for AND (value1 AND value2 AND *)
+
+
+
  Excluding;
 
  --user becomes excluded if --allUsers is set
@@ -90,16 +106,17 @@ import argparse
 import operator
 import datetime
 import unicodedata
+from collections import Counter
 from plexapi.server import PlexServer, CONFIG
 
-### EDIT SETTINGS ###
+# ### EDIT SETTINGS ###
 
 PLEX_URL = ''
 PLEX_TOKEN = ''
 TAUTULLI_URL = ''
 TAUTULLI_APIKEY = ''
 
-## CODE BELOW ##
+# ## CODE BELOW ##
 
 if not PLEX_URL:
     PLEX_URL = CONFIG.data['auth'].get('server_baseurl')
@@ -131,10 +148,11 @@ account = plex.myPlexAccount()
 user_lst = [x.title for x in plex.myPlexAccount().users() if x.servers]
 sections = plex.library.sections()
 sections_dict = {x.key: x.title for x in sections}
-filter_lst = list(set([y for x in sections if x.type != 'photo' for y in x.ALLOWED_FILTERS]))
+filters_lst = list(set([y for x in sections if x.type != 'photo' for y in x.ALLOWED_FILTERS]))
 playlist_lst = [x.title for x in plex.playlists()]
 today = datetime.datetime.now().date()
 weeknum = datetime.date(today.year, today.month, today.day).isocalendar()[1]
+
 
 def actions():
     """
@@ -150,15 +168,15 @@ def actions():
 def selectors():
     """Predefined Playlist selections and titles
     """
-    selections = {'historyToday':'Aired Today {month}-{day} in History',
+    selections = {'historyToday': 'Aired Today {month}-{day} in History',
                   'historyWeek': 'Aired This Week ({week}) in History',
                   'historyMonth': 'Aired in {month}',
                   'popularTv': 'Most Popular TV Shows ({days} days)',
                   'popularMovies': 'Most Popular Movies ({days} days)',
-                  'custom':'{custom} Playlist',
+                  'custom': '{custom} Playlist',
                   'random': '{count} Random {libraries} Playlist'
                   }
-    
+
     return selections
 
 
@@ -189,7 +207,7 @@ def exclusions(all_true, select, all_items):
             for x in select:
                 all_items.remove(x)
                 output = all_items
-                
+
     elif isinstance(all_items, dict):
         output = {}
         if all_true and not select:
@@ -202,7 +220,7 @@ def exclusions(all_true, select, all_items):
             for key, value in all_items.items():
                 if value not in select:
                     output[key] = value
-    
+
     return output
 
 
@@ -212,7 +230,7 @@ def get_home_stats(time_range, stats_count):
                'cmd': 'get_home_stats',
                'time_range': time_range,
                'stats_count': stats_count,
-               'stats_type': 0} # stats_type = plays
+               'stats_type': 0}  # stats_type = plays
 
     try:
         r = requests.get(TAUTULLI_URL.rstrip('/') + '/api/v2', params=payload)
@@ -255,13 +273,67 @@ def sort_by_dates(video, date_type):
                 return [[video.ratingKey] + [str(video.originallyAvailableAt)]]
 
     # todo-me return object
-    except Exception as e:
+    except Exception:
         # print(e)
         return
 
 
+def multi_filter_search(keyword_dict, library, search_eps=None):
+    """Allowing for multiple filter or search values
+
+    Parameters
+    ----------
+    keyword_dict: dict
+    library: class
+    search_eps: bool
+
+    Returns
+    -------
+    list
+        items that include all searched or filtered values
+    """
+    multi_lst = []
+    ep_lst = []
+    logs = {}
+    ep_logs = []
+    # How many keywords
+    keyword_count = len(keyword_dict)
+    for key, values in keyword_dict.items():
+        if isinstance(values, list):
+            keyword_count += 1
+            for value in values:
+                search_dict = {}
+                search_dict[key] = value
+                if search_eps:
+                    logs["data"] = [{key: value}]
+                    for show in library.all():
+                        for episode in show.episodes(**search_dict):
+                            ep_lst += [episode.ratingKey]
+                            ep_logs += [episode.title, episode.summary]
+
+                        logs["data"].append({"keys": ep_lst, "info": ep_logs})
+                    search_lst = ep_lst
+                else:
+                    search_lst = [item.ratingKey for item in library.all(**search_dict)]
+                multi_lst += search_lst
+        else:
+            if search_eps:
+                for show in library.all():
+                    for episode in show.episodes(**{key: values}):
+                        ep_lst += [episode.ratingKey]
+                multi_lst += ep_lst
+
+            else:
+                multi_lst += [item.ratingKey for item in library.all(**{key: values})]
+    counts = Counter(multi_lst)
+    # Use amount of keywords to check that all keywords were found in results
+    search_lst = [id for id in multi_lst if counts[id] >= keyword_count]
+
+    return list(set(search_lst))
+
+
 def get_content(libraries, jbop, filters=None, search=None, limit=None):
-    """Get all movies or episodes from LIBRARY_NAME
+    """Get all movies or episodes from LIBRARY_NAME.
 
     Parameters
     ----------
@@ -275,16 +347,18 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
     list
         Sorted list of Movie and episodes that
         aired on today's date.
+
     """
     child_lst = []
     filter_lst = []
     search_lst = []
-    keyword = ''
+    keywords = {}
+    tags = "__tag__icontains"
 
     if search or filters:
         if search:
             # todo-me replace with documentation showing the available search operators
-            keyword = {key + '__icontains': value for key, value in search.items()}
+            keywords = {key + '__icontains': value for key, value in search.items()}
         # Loop through each library
         for library in libraries.keys():
             plex_library = plex.library.sectionByID(library)
@@ -292,37 +366,59 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
             # Find media type, if show then search/filter episodes
             if library_type == 'movie':
                 # Decisions to stack filter and search
-                if keyword:
-                    search_lst = [movie.ratingKey for movie in plex_library.all(**keyword)]
-                    child_lst += search_lst
+                if keywords:
+                    child_lst += multi_filter_search(keywords, plex_library)
                 if filters:
-                    filter_lst = [movie.ratingKey for movie in plex_library.search(**filters)]
-                    child_lst += filter_lst
-                if keyword and filters:
+                    # Update filters for tagged filtered keys
+                    for key, value in filters.items():
+                        # Genre needs special handling
+                        if key == "genre":
+                            del filters[key]
+                            filters[key + tags] = value
+                    for key, value in filters.items():
+                        # Only genre filtering should allow multiple values and allow for AND statement
+                        if key.endswith(tags):
+                            child_lst += multi_filter_search({key: value}, plex_library)
+                        else:
+                            filter_lst = [movie.ratingKey for movie in plex_library.search(**{key: value})]
+                            child_lst += filter_lst
+                if keywords and filters:
                     child_lst += list(set(filter_lst) & set(search_lst))
-                    
+
             elif library_type == 'show':
                 # Decisions to stack filter and search
-                if keyword:
-                    for show in plex_library.all():
-                        for episode in show.episodes(**keyword):
-                            search_lst += [episode.ratingKey]
+                if keywords:
+                    search_lst = multi_filter_search(keywords, plex_library, search_eps=True)
                     child_lst += search_lst
                 if filters:
-                    for show in plex_library.search(**filters):
-                        for episode in show.episodes():
-                            filter_lst += [episode.ratingKey]
-                    child_lst += filter_lst
-                if keyword and filters:
+                    # Update filters for tagged filtered keys
+                    for key, value in filters.items():
+                        # Genre needs special handling
+                        if key == "genre":
+                            del filters[key]
+                            filters[key + tags] = value
+                    for key, value in filters.items():
+                        # Only genre filtering should allow multiple values and allow for AND statement
+                        if key.endswith(tags):
+                            shows_lst = multi_filter_search({key: value}, plex_library)
+                        else:
+                            shows_lst = [show for show in plex_library.search(**{key: value})]
+                        for showkey in shows_lst:
+                            show = plex.fetchItem(showkey)
+                            for episode in show.episodes():
+                                filter_lst += [episode.ratingKey]
+                        child_lst += filter_lst
+
+                if keywords and filters:
                     child_lst += list(set(filter_lst) & set(search_lst))
             else:
                 pass
         # Keep only results found from both search and filters
-        if keyword and filters:
+        if keywords and filters:
             child_lst = list(set(i for i in child_lst if child_lst.count(i) > 1))
-            
+
         play_lst = child_lst
-        
+
     else:
         for library in libraries.keys():
             plex_library = plex.library.sectionByID(library)
@@ -350,7 +446,7 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
             # Sort by original air date, oldest first
             # todo-me move sorting and add more sorting options
             aired_lst = sorted(child_lst, key=operator.itemgetter(1))
-        
+
             # Remove date used for sorting
             play_lst = [x[0] for x in aired_lst]
         else:
@@ -384,7 +480,7 @@ def build_playlist(jbop, libraries=None, days=None, top=None, filters=None, sear
         for stat in home_stats:
             if stat['stat_id'] in ['popular_tv', 'popular_movies']:
                 keys_list += [x['rating_key'] for x in stat['rows'] if
-                             str(x['section_id']) in libraries.keys()]
+                              str(x['section_id']) in libraries.keys()]
     else:
         try:
             keys_list = get_content(libraries, jbop, filters, search, limit)
@@ -435,11 +531,12 @@ def show_playlist(playlist_title, playlist_keys):
             title = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').translate(None, "'")
             playlist_list.append(title)
 
-    print(u"Contents of Playlist {title}:\n{playlist}".format(title=playlist_title,
-                                                             playlist=', '.join(playlist_list)))
+    print(u"Contents of Playlist {title}:\n{playlist}".format(
+        title=playlist_title,
+        playlist=', '.join(playlist_list)))
     exit()
-    
-    
+
+
 def create_playlist(playlist_title, playlist_keys, server, user):
     """
     Parameters
@@ -462,13 +559,13 @@ def create_playlist(playlist_title, playlist_keys, server, user):
                     playlist_list.append(episode)
             else:
                 playlist_list.append(plex_obj)
-        except Exception as e:
+        except Exception:
             try:
                 obj = plex.fetchItem(key)
                 print("{} may not have permission to this title: {}".format(user, obj.title))
                 # print("Error: {}".format(e))
                 pass
-            except Exception as e:
+            except Exception:
                 print('Rating Key: {}, may have been deleted or moved.'.format(key))
                 # print("Error: {}".format(e))
 
@@ -488,7 +585,7 @@ def delete_playlist(playlist_dict, title):
     """
     server = playlist_dict['server']
     user = playlist_dict['user']
-    
+
     try:
         # todo-me this needs improvement
         for playlist in server.playlists():
@@ -505,14 +602,14 @@ def delete_playlist(playlist_dict, title):
                     print("...Deleted Playlist: {playlist.title} for '{user}'."
                           .format(playlist=playlist, user=user))
 
-    except:
+    except Exception:
         # print("Playlist not found on '{user}' account".format(user=user))
         pass
 
 
 def create_title(jbop, libraries, days, filters, search, limit):
     """
-    
+
     Parameters
     ----------
     jbop: str
@@ -544,9 +641,21 @@ def create_title(jbop, libraries, days, filters, search, limit):
 
     elif jbop == 'custom':
         if search and not filters:
-            title = ' '.join(search.values())
+            title_lst = []
+            for values in search.values():
+                if isinstance(values, list):
+                    title_lst += values
+                else:
+                    title_lst += [values]
+            title = " ".join(title_lst)
         elif filters and not search:
-            title = ' '.join(filters.values())
+            title_lst = []
+            for values in filters.values():
+                if isinstance(values, list):
+                    title_lst += values
+                else:
+                    title_lst += [values]
+            title = " ".join(title_lst)
         elif search and filters:
             search_title = ' '.join(search.values())
             filters_title = ' '.join(filters.values())
@@ -570,9 +679,9 @@ def create_title(jbop, libraries, days, filters, search, limit):
 
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description="Create, share, and clean Playlists for users.",
-                                     formatter_class = argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Create, share, and clean Playlists for users.",
+        formatter_class=argparse.RawTextHelpFormatter)
     # todo-me use parser grouping instead of choices for action and jbop?
     parser.add_argument('--jbop', choices=selectors().keys(), metavar='',
                         help='Playlist selector.\n'
@@ -609,11 +718,11 @@ if __name__ == "__main__":
                         help='Limit the amount items to be added to a playlist.')
     parser.add_argument('--filter', action='append', type=lambda kv: kv.split("="),
                         help='Search filtered metadata fields.\n'
-                             'Filters: ({}).'.format(', '.join(filter_lst)))
+                             'Filters: ({}).'.format(', '.join(filters_lst)))
     parser.add_argument('--search', action='append', type=lambda kv: kv.split("="),
                         help='Search non-filtered metadata fields for keywords '
                              'in title, summary, etc.')
-    
+
     opts = parser.parse_args()
 
     title = ''
@@ -625,12 +734,28 @@ if __name__ == "__main__":
 
     if opts.search:
         search = dict(opts.search)
+        for k, v in search.items():
+            # If comma separated search then consider searching values with AND statement
+            if "," in v:
+                search[k] = v.split(",")
     if opts.filter:
+        if len(opts.filter) >= 2:
+            # Check if filter key was used twice or more
+            filter_key = opts.filter[0][0]
+            filter_count = sum(f.count(filter_key) for f in opts.filter)
+            # If filter key used more than once than consider filtering values with OR statement
+            if filter_count > 1:
+                filters_lst = []
+
         filters = dict(opts.filter)
+        for k, v in filters.items():
+            # If comma separated filter then consider filtering values with AND statement
+            if "," in v:
+                filters[k] = v.split(",")
         # Check if provided filter exist, exit if it doesn't exist
-        if not (set(filters.keys()) & set(filter_lst)):
+        if not (set(filters.keys()) & set(filters_lst)):
             print('({}) was not found in filters list: [{}]'
-                  .format(' '.join(filters.keys()), ', '.join(filter_lst)))
+                  .format(' '.join(filters.keys()), ', '.join(filters_lst)))
             exit()
 
     # Defining users
@@ -638,10 +763,10 @@ if __name__ == "__main__":
 
     # Defining libraries
     libraries = exclusions(opts.allLibraries, opts.libraries, sections_dict)
-    
+
     # Defining selected playlists
     selected_playlists = exclusions(opts.allPlaylists, opts.playlists, playlist_lst)
-    
+
     # Create user server objects
     if users:
         for user in users:
@@ -658,12 +783,13 @@ if __name__ == "__main__":
                 'user': user,
                 'user_selected': user_selected,
                 'all_playlists': all_playlists})
-            
+
     if opts.self or not users:
-        playlist_dict['data'].append({'server': plex,
-                             'user': 'admin',
-                             'user_selected': selected_playlists,
-                             'all_playlists': playlist_lst})
+        playlist_dict['data'].append({
+            'server': plex,
+            'user': 'admin',
+            'user_selected': selected_playlists,
+            'all_playlists': playlist_lst})
 
     if not opts.jbop and opts.action == 'show':
         print("Displaying the user's playlist(s)...")
@@ -672,7 +798,7 @@ if __name__ == "__main__":
             playlists = data['all_playlists']
             print("{}'s current playlist(s): {}".format(user, ', '.join(playlists)))
         exit()
-    
+
     if libraries:
         title = create_title(opts.jbop, libraries, opts.days, filters, search, opts.limit)
         keys_list = build_playlist(opts.jbop, libraries, opts.days, opts.top, filters, search, opts.limit)
@@ -683,18 +809,18 @@ if __name__ == "__main__":
         for data in playlist_dict['data']:
             titles = data['user_selected']
             delete_playlist(data, titles)
-    
+
     # Check if limit exist and if it's greater than the pulled list of rating keys
     if opts.limit and len(keys_list) > int(opts.limit):
         if opts.jbop == 'random':
             keys_list = random.sample((keys_list), opts.limit)
         else:
             keys_list = keys_list[:opts.limit]
-        
+
     # Setting custom name if provided
     if opts.name:
         title = opts.name
-        
+
     if opts.jbop and opts.action == 'show':
         show_playlist(title, keys_list)
 
@@ -705,7 +831,7 @@ if __name__ == "__main__":
         print('Creating playlist(s)...')
         for data in playlist_dict['data']:
             create_playlist(title, keys_list, data['server'], data['user'])
-            
+
     if opts.action == 'add':
         print('Creating playlist(s)...')
         for data in playlist_dict['data']:
