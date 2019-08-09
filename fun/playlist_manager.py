@@ -100,7 +100,9 @@ optional arguments:
 """
 
 import sys
+import os
 import random
+import logging
 import requests
 import argparse
 import operator
@@ -108,6 +110,26 @@ import datetime
 import unicodedata
 from collections import Counter
 from plexapi.server import PlexServer, CONFIG
+
+filename = os.path.basename(__file__)
+filename = filename.split('.')[0]
+
+logger = logging.getLogger(filename)
+logger.setLevel(logging.DEBUG)
+
+error_format = logging.Formatter('%(asctime)s:%(name)s:%(funcName)s:%(message)s')
+stream_format = logging.Formatter('%(message)s')
+
+file_handler = logging.FileHandler('{}.log'.format(filename))
+file_handler.setLevel(logging.ERROR)
+file_handler.setFormatter(error_format)
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(stream_format)
+
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
+
 
 # ### EDIT SETTINGS ###
 
@@ -265,17 +287,19 @@ def sort_by_dates(video, date_type):
         if date_type == 'historyToday':
             if ad_month == today.month and ad_day == today.day:
                 return [[video.ratingKey] + [str(video.originallyAvailableAt)]]
-        if date_type == 'historyWeek':
+        elif date_type == 'historyWeek':
             if ad_week == weeknum:
                 return [[video.ratingKey] + [str(video.originallyAvailableAt)]]
-        if date_type == 'historyMonth':
+        elif date_type == 'historyMonth':
             if ad_month == today.month:
                 return [[video.ratingKey] + [str(video.originallyAvailableAt)]]
-
+        else:
+            logger.debug("{} is outside of range for {}".format(video.title, date_type))
+            pass
     # todo-me return object
-    except Exception:
-        # print(e)
-        return
+    except Exception as e:
+        logger.exception(e)
+        exit()
 
 
 def multi_filter_search(keyword_dict, library, search_eps=None):
@@ -402,7 +426,7 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
                         if key.endswith(tags):
                             shows_lst = multi_filter_search({key: value}, plex_library)
                         else:
-                            shows_lst = [show for show in plex_library.search(**{key: value})]
+                            shows_lst = [show.ratingKey for show in plex_library.search(**{key: value})]
                         for showkey in shows_lst:
                             show = plex.fetchItem(showkey)
                             for episode in show.episodes():
@@ -420,27 +444,27 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
         play_lst = child_lst
 
     else:
-        for library in libraries.keys():
-            plex_library = plex.library.sectionByID(library)
+        for library_id in libraries.keys():
+            plex_library = plex.library.sectionByID(library_id)
             library_type = plex_library.type
-            if jbop == 'random' and library_type == 'movie':
-                child_lst += [movie.ratingKey for movie in random.sample((plex_library.all()), limit)]
-            elif jbop == 'random' and library_type == 'show':
-                all_eps = [eps for show in plex_library.all() for eps in show.episodes()]
-                child_lst += [show.ratingKey for show in random.sample((all_eps), limit)]
-            else:
+            if library_type == 'movie':
                 for child in plex_library.all():
-                    if child.type == 'movie':
+                    if jbop.startswith("history"):
                         if sort_by_dates(child, jbop):
                             item_date = sort_by_dates(child, jbop)
                             child_lst += item_date
-                    elif child.type == 'show':
-                        for episode in child.episodes():
-                            if sort_by_dates(episode, jbop):
-                                item_date = sort_by_dates(episode, jbop)
-                                child_lst += item_date
                     else:
-                        pass
+                        child_lst += [child.ratingKey]
+            elif library_type == 'show':
+                for child in plex_library.all():
+                    for episode in child.episodes():
+                        if jbop.startswith("history"):
+                            item_date = sort_by_dates(episode, jbop)
+                            child_lst += item_date
+                        else:
+                            child_lst += [episode.ratingKey]
+            else:
+                 pass
         # check if sort_by_dates was used
         if isinstance(child_lst[0], list):
             # Sort by original air date, oldest first
@@ -450,6 +474,9 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
             # Remove date used for sorting
             play_lst = [x[0] for x in aired_lst]
         else:
+            # todo-me probably will want to check limit by itself
+            if jbop == "random" and limit:
+                child_lst = random.sample(child_lst, limit)
             play_lst = child_lst
 
     return play_lst
@@ -485,8 +512,8 @@ def build_playlist(jbop, libraries=None, days=None, top=None, filters=None, sear
         try:
             keys_list = get_content(libraries, jbop, filters, search, limit)
         except TypeError as e:
-            print("Libraries are not defined for {}. Use --libraries.".format(jbop))
-            exit("Error: {}".format(e))
+            logger.exception("Libraries are not defined for {}. Use --libraries.".format(jbop))
+            exit()
 
     return keys_list
 
@@ -502,7 +529,7 @@ def share_playlists(playlist_titles, users):
     """
     for user in users:
         for title in playlist_titles:
-            print("...Shared {title} playlist to '{user}'.".format(title=title, user=user))
+            logger.info("...Shared {title} playlist to '{user}'.".format(title=title, user=user))
             plex.playlist(title).copyToUser(user)
 
     exit()
@@ -531,7 +558,7 @@ def show_playlist(playlist_title, playlist_keys):
             title = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').translate(None, "'")
             playlist_list.append(title)
 
-    print(u"Contents of Playlist {title}:\n{playlist}".format(
+    logger.info(u"Contents of Playlist {title}:\n{playlist}".format(
         title=playlist_title,
         playlist=', '.join(playlist_list)))
     exit()
@@ -562,16 +589,14 @@ def create_playlist(playlist_title, playlist_keys, server, user):
         except Exception:
             try:
                 obj = plex.fetchItem(key)
-                print("{} may not have permission to this title: {}".format(user, obj.title))
-                # print("Error: {}".format(e))
+                logger.exception("{} may not have permission to this title: {}".format(user, obj.title))
                 pass
             except Exception:
-                print('Rating Key: {}, may have been deleted or moved.'.format(key))
-                # print("Error: {}".format(e))
+                logger.exception('Rating Key: {}, may have been deleted or moved.'.format(key))
 
     if playlist_list:
         server.createPlaylist(playlist_title, playlist_list)
-        print("...Added Playlist: {title} to '{user}'.".format(title=playlist_title, user=user))
+        logger.info("...Added Playlist: {title} to '{user}'.".format(title=playlist_title, user=user))
 
 
 def delete_playlist(playlist_dict, title):
@@ -593,17 +618,17 @@ def delete_playlist(playlist_dict, title):
                 # If str then updating playlist
                 if playlist.title == title:
                     playlist.delete()
-                    print("...Deleted Playlist: {playlist.title} for '{user}'."
+                    logger.info("...Deleted Playlist: {playlist.title} for '{user}'."
                           .format(playlist=playlist, user=user))
             if isinstance(title, list):
                 # If list then removing selected playlists
                 if playlist.title in title:
                     playlist.delete()
-                    print("...Deleted Playlist: {playlist.title} for '{user}'."
+                    logger.info("...Deleted Playlist: {playlist.title} for '{user}'."
                           .format(playlist=playlist, user=user))
 
     except Exception:
-        # print("Playlist not found on '{user}' account".format(user=user))
+        logger.exception("Playlist not found on '{user}' account".format(user=user))
         pass
 
 
@@ -666,7 +691,7 @@ def create_title(jbop, libraries, days, filters, search, limit):
 
     elif jbop == 'random':
         if not limit:
-            print("Random selector needs a limit. Use --limit.")
+            logger.info("Random selector needs a limit. Use --limit.")
             exit()
         title = selectors()['random'].format(count=limit, libraries='/'.join(libraries.values()))
 
@@ -754,7 +779,7 @@ if __name__ == "__main__":
                 filters[k] = v.split(",")
         # Check if provided filter exist, exit if it doesn't exist
         if not (set(filters.keys()) & set(filters_lst)):
-            print('({}) was not found in filters list: [{}]'
+            logger.error('({}) was not found in filters list: [{}]'
                   .format(' '.join(filters.keys()), ', '.join(filters_lst)))
             exit()
 
@@ -772,7 +797,7 @@ if __name__ == "__main__":
         for user in users:
             # todo-me smart playlists will have to recreated in users server instance
             if opts.action == 'share' and selected_playlists:
-                print("Sharing playlist(s)...")
+                logger.info("Sharing playlist(s)...")
                 share_playlists(selected_playlists, users)
             user_acct = account.user(user)
             user_server = PlexServer(PLEX_URL, user_acct.get_token(plex.machineIdentifier))
@@ -792,11 +817,11 @@ if __name__ == "__main__":
             'all_playlists': playlist_lst})
 
     if not opts.jbop and opts.action == 'show':
-        print("Displaying the user's playlist(s)...")
+        logger.info("Displaying the user's playlist(s)...")
         for data in playlist_dict['data']:
             user = data['user']
             playlists = data['all_playlists']
-            print("{}'s current playlist(s): {}".format(user, ', '.join(playlists)))
+            logger.info("{}'s current playlist(s): {}".format(user, ', '.join(playlists)))
         exit()
 
     if libraries:
@@ -805,7 +830,7 @@ if __name__ == "__main__":
 
     # Remove or build playlists
     if opts.action == 'remove':
-        print("Deleting the playlist(s)...")
+        logger.info("Deleting the playlist(s)...")
         for data in playlist_dict['data']:
             titles = data['user_selected']
             delete_playlist(data, titles)
@@ -822,19 +847,23 @@ if __name__ == "__main__":
         title = opts.name
 
     if opts.jbop and opts.action == 'show':
-        show_playlist(title, keys_list)
+        if len(libraries) > 0:
+            show_playlist(title, keys_list)
+        else:
+            logger.error("Missing --libraries or --allLibraries")
+            exit()
 
     if opts.action == 'update':
-        print("Deleting the playlist(s)...")
+        logger.info("Deleting the playlist(s)...")
         for data in playlist_dict['data']:
             delete_playlist(data, title)
-        print('Creating playlist(s)...')
+            logger.info('Creating playlist(s)...')
         for data in playlist_dict['data']:
             create_playlist(title, keys_list, data['server'], data['user'])
 
     if opts.action == 'add':
-        print('Creating playlist(s)...')
+        logger.info('Creating playlist(s)...')
         for data in playlist_dict['data']:
             create_playlist(title, keys_list, data['server'], data['user'])
 
-    print("Done.")
+    logger.info("Done.")
