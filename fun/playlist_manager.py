@@ -167,7 +167,7 @@ if sess.verify is False:
 plex = PlexServer(PLEX_URL, PLEX_TOKEN, session=sess)
 account = plex.myPlexAccount()
 
-user_lst = [x.title for x in plex.myPlexAccount().users() if x.servers]
+user_lst = [x.title for x in plex.myPlexAccount().users() if x.servers and x.friend]
 sections = plex.library.sections()
 sections_dict = {x.key: x.title for x in sections}
 filters_lst = list(set([y for x in sections if x.type != 'photo' for y in x.ALLOWED_FILTERS]))
@@ -298,8 +298,8 @@ def sort_by_dates(video, date_type):
             pass
     # todo-me return object
     except Exception as e:
-        logger.exception(e)
-        exit()
+        logger.error("Error:{} for {}".format(e, video._prettyfilename()))
+        # exit()
 
 
 def multi_filter_search(keyword_dict, library, search_eps=None):
@@ -459,8 +459,9 @@ def get_content(libraries, jbop, filters=None, search=None, limit=None):
                 for child in plex_library.all():
                     for episode in child.episodes():
                         if jbop.startswith("history"):
-                            item_date = sort_by_dates(episode, jbop)
-                            child_lst += item_date
+                            if sort_by_dates(episode, jbop):
+                                item_date = sort_by_dates(episode, jbop)
+                                child_lst += item_date
                         else:
                             child_lst += [episode.ratingKey]
             else:
