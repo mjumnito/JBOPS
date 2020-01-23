@@ -174,7 +174,7 @@ def rich_notify(notifier_id, rich_type, color=None, kill_type=None, server_name=
     tautulli : obj
         Tautulli object.
     """
-    notification = Notification(notifier_id, SUBJECT_TEXT, BODY_TEXT, tautulli, stream)
+    notification = Notification(notifier_id, None, None, tautulli, stream)
     # Initialize Variables
     title = ''
     footer = ''
@@ -268,7 +268,9 @@ class Tautulli:
         try:
             response_json = response.json()
         except ValueError:
-            print("Failed to parse json response for Tautulli API cmd '{}'".format(cmd))
+            print(
+                "Failed to parse json response for Tautulli API cmd '{}': {}"
+                .format(cmd, response.content))
             return
 
         if response_json['response']['result'] == 'success':
