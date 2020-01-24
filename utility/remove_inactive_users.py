@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-"""
-Unshare or Remove users who have been inactive for X days. Prints out last seen for all users.
+# -*- coding: utf-8 -*-
+
+"""Unshare or Remove users who have been inactive for X days. Prints out last seen for all users.
 
 Just run.
 
@@ -112,8 +113,11 @@ for user in TAUTULLI_USERS:
         if DRY_RUN:
             print('{}, and would unshare libraries.'.format(OUTPUT))
         else:
-            print('{}, and has reached their inactivity limit. Unsharing.'.format(OUTPUT))
-            ACCOUNT.updateFriend(PLEX_USERS[UID], SERVER, removeSections=True)
 
-
-
+            for server in ACCOUNT.user(PLEX_USERS[UID]).servers:
+                if server.machineIdentifier == SERVER.machineIdentifier and server.sections():
+                    print('{}, and has reached their inactivity limit. Unsharing.'.format(OUTPUT))
+                    ACCOUNT.updateFriend(PLEX_USERS[UID], SERVER, SECTIONS, removeSections=True)
+                else:
+                    print("{}, has already been unshared, but has not reached their shareless threshold."
+                          "Skipping.".format(OUTPUT))

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-'''
-Share or unshare libraries.
+# -*- coding: utf-8 -*-
+
+"""Share or unshare libraries.
 
 optional arguments:
   -h, --help            Show this help message and exit
@@ -21,6 +22,7 @@ optional arguments:
   --restore             Restore share settings from json file
                         Filename of json file to use.
                         (choices: %(json files found in cwd)s)
+  --libraryShares       Show all shares by library
 
   # Plex Pass member only settings:
   --kill                Kill user's current stream(s). Include message to override default message
@@ -64,7 +66,7 @@ Usage:
 
    plex_api_share.py --backup
        - Backup all user shares to a json file
-       
+
    plex_api_share.py --backup --user USER
        - Backup USER shares to a json file
 
@@ -80,6 +82,9 @@ Usage:
    plex_api_share.py --user USER --remove --sync
        - Disable sync feature for USER
 
+   plex_api_share.py --libraryShares
+       - {Library Name} is shared to the following users:
+             {USERS}
 
    Excluding;
 
@@ -92,7 +97,7 @@ Usage:
    plex_api_share.py --share -u USER --allLibraries --libraries Movies
        - Shared [all libraries but Movies] with USER.
 
-'''
+"""
 
 from plexapi.server import PlexServer, CONFIG
 import time
@@ -133,13 +138,14 @@ movies_keys = [x.key for x in plex.library.sections() if x.type == 'movie']
 show_keys = [x.key for x in plex.library.sections() if x.type == 'show']
 
 json_check = sorted([f for f in os.listdir('.') if os.path.isfile(f) and
-                     f.endswith(".json") and f.startswith(plex.friendlyName)],
+                     f.endswith(".json") and
+                     f.startswith(plex.friendlyName)],
                     key=os.path.getmtime)
 
 my_server_names = []
 # Find all owners server names. For owners with multiple servers.
 for res in plex.myPlexAccount().resources():
-    if res.provides == 'server' and res.owned == True:
+    if res.provides == 'server' and res.owned is True:
         my_server_names.append(res.name)
 
 
@@ -147,7 +153,7 @@ def get_ratings_lst(section_id):
     headers = {'Accept': 'application/json'}
     params = {'X-Plex-Token': PLEX_TOKEN}
     content = sess.get("{}/library/sections/{}/contentRating".format(PLEX_URL, section_id),
-                           headers=headers, params=params)
+                       headers=headers, params=params)
 
     ratings_keys = content.json()['MediaContainer']['Directory']
     ratings_lst = [x['title'] for x in ratings_keys]
@@ -162,7 +168,7 @@ def filter_clean(filter_type):
             labels = v.replace('%20', ' ')
             labels = labels.split('%2C')
             clean[k] = labels
-    except Exception as e:
+    except Exception:
         pass
     return clean
 
@@ -189,7 +195,7 @@ def find_shares(user):
         if server.name == plex.friendlyName:
             sections = []
             for section in server.sections():
-                if section.shared == True:
+                if section.shared is True:
                     sections.append(section.title)
             user_backup['sections'] = sections
 
@@ -215,17 +221,17 @@ def share(user, sections, allowSync, camera, channels, filterMovies, filterTelev
                                       filterTelevision=filterTelevision, filterMusic=filterMusic)
     if sections:
         print('{user}\'s updated shared libraries: \n{sections}'.format(sections=sections, user=user))
-    if allowSync == True:
+    if allowSync is True:
         print('Sync: Enabled')
-    if allowSync == False:
+    if allowSync is False:
         print('Sync: Disabled')
-    if camera == True:
+    if camera is True:
         print('Camera Upload: Enabled')
-    if camera == False:
+    if camera is False:
         print('Camera Upload: Disabled')
-    if channels == True:
+    if channels is True:
         print('Plugins: Enabled')
-    if channels == False:
+    if channels is False:
         print('Plugins: Disabled')
     if filterMovies:
         print('Movie Filters: {}'.format(filterMovies))
@@ -237,7 +243,7 @@ def share(user, sections, allowSync, camera, channels, filterMovies, filterTelev
         print('Show Filters:')
     if filterMusic:
         print('Music Filters: {}'.format(filterMusic))
-    if filterMusic == {} and filterMusic != None:
+    if filterMusic == {} and filterMusic is not None:
         print('Music Filters:')
 
 
@@ -278,9 +284,11 @@ if __name__ == "__main__":
                         help='Restore share settings from json file.\n'
                              'Filename of json file to use.\n'
                              '(choices: %(choices)s)')
+    parser.add_argument('--libraryShares', default=False, action='store_true',
+                        help='Show all shares by library.')
 
     # For Plex Pass members
-    if plex.myPlexSubscription == True:
+    if plex.myPlexSubscription is True:
         movie_ratings = []
         show_ratings = []
         for movie in movies_keys:
@@ -365,7 +373,7 @@ if __name__ == "__main__":
                 for k, v in user_lst.items():
                     if v == user:
                         del user_lst[k]
-            
+
         users = user_lst.keys()
 
     # Defining libraries
@@ -379,6 +387,21 @@ if __name__ == "__main__":
             sections_lst.remove(library)
             libraries = sections_lst
 
+    if opts.libraryShares:
+        users = user_lst.keys()
+        user_sections = {}
+        for user in users:
+            user_shares_lst = find_shares(user)
+            user_sections[user] = user_shares_lst['sections']
+
+        section_users = {}
+        for user, sections in user_sections.items():
+            for section in sections:
+                section_users.setdefault(section, []).append(user)
+
+        for section, users in section_users.items():
+            print("{} is shared to the following users:\n  {}\n".format(section, ", ".join(users)))
+
     # Share, Unshare, Kill, Add, or Remove
     for user in users:
         user_shares = find_shares(user)
@@ -388,19 +411,19 @@ if __name__ == "__main__":
                 share(user, libraries, sync, camera, channels, filterMovies, filterTelevision,
                       filterMusic)
             if opts.add and user_shares_lst:
-                libraries = libraries + user_shares_lst
-                libraries = list(set(libraries))
-                share(user, libraries, sync, camera, channels, filterMovies, filterTelevision,
+                addedLibraries = libraries + user_shares_lst
+                addedLibraries = list(set(addedLibraries))
+                share(user, addedLibraries, sync, camera, channels, filterMovies, filterTelevision,
                       filterMusic)
             if opts.remove and user_shares_lst:
-                libraries = [sect for sect in user_shares_lst if sect not in libraries]
-                share(user, libraries, sync, camera, channels, filterMovies, filterTelevision,
+                removedLibraries = [sect for sect in user_shares_lst if sect not in libraries]
+                share(user, removedLibraries, sync, camera, channels, filterMovies, filterTelevision,
                       filterMusic)
         else:
             if opts.add:
                 # Add/Enable settings independently of libraries
-                libraries = user_shares_lst
-                share(user, libraries, sync, camera, channels, filterMovies, filterTelevision,
+                addedLibraries = user_shares_lst
+                share(user, addedLibraries, sync, camera, channels, filterMovies, filterTelevision,
                       filterMusic)
             if opts.remove:
                 # Remove/Disable settings independently of libraries
