@@ -8,7 +8,7 @@ import requests
 import sys
 
 ## EDIT THESE SETTINGS ##
-TAUTULLI_APIKEY = 'XXXXXXXX'  # Your Tautulli API key
+TAUTULLI_APIKEY = '6a53760fc1504ed386ee86f3a1ebe0c3'  # Your Tautulli API key
 TAUTULLI_URL = 'http://localhost:8181/'  # Your Tautulli URL
 
 lib_met = []
