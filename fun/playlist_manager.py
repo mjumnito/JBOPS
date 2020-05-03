@@ -196,7 +196,9 @@ def selectors():
                   'popularTv': 'Most Popular TV Shows ({days} days)',
                   'popularMovies': 'Most Popular Movies ({days} days)',
                   'custom': '{custom} Playlist',
-                  'random': '{count} Random {libraries} Playlist'
+                  'random': '{count} Random {libraries} Playlist',
+                  'label': '{custom}',
+                  'collection': '{custom}'
                   }
 
     return selections
@@ -846,6 +848,10 @@ if __name__ == "__main__":
     # Setting custom name if provided
     if opts.name:
         title = opts.name
+    elif not opts.name and opts.jbop in ['collection', 'label']:
+        logger.error("If using --jbop collection or label, "
+                     "you must provide a custom name")
+        exit()
 
     if opts.jbop and opts.action == 'show':
         if len(libraries) > 0:
@@ -863,8 +869,20 @@ if __name__ == "__main__":
             create_playlist(title, keys_list, data['server'], data['user'])
 
     if opts.action == 'add':
-        logger.info('Creating playlist(s)...')
-        for data in playlist_dict['data']:
-            create_playlist(title, keys_list, data['server'], data['user'])
+        if opts.jbop == 'collection':
+            logger.info('Creating collection(s)...')
+            for key in keys_list:
+                item = plex.fetchItem(int(key))
+                item.addCollection([title])
+    
+        elif opts.jbop == 'label':
+            logger.info('Creating label(s)...')
+            for key in keys_list:
+                item = plex.fetchItem(int(key))
+                item.addLabel([title])
+        else:
+            logger.info('Creating playlist(s)...')
+            for data in playlist_dict['data']:
+                create_playlist(title, keys_list, data['server'], data['user'])
 
     logger.info("Done.")
