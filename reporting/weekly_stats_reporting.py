@@ -44,9 +44,16 @@ else:
     
 RICH_TYPE = ['discord', 'slack']
 
+# Colors for rich notifications
+SECTIONS_COLOR = 10964298
+USERS_COLOR = 10964298
+
+# Author name for rich notifications
+AUTHOR_NAME = 'My Server'
+
 TAUTULLI_ICON = 'https://github.com/Tautulli/Tautulli/raw/master/data/interfaces/default/images/logo-circle.png'
 
-SUBJECT_TEXT = "Tautulli Weekly Server, Library, and User Statistics"
+SUBJECT_TEXT = "Tautulli Statistics"
 
 # Notification notifier ID: https://github.com/JonnyWong16/plexpy/blob/master/API.md#notify
 NOTIFIER_ID = 12  # The email notification notifier ID for Tautulli
@@ -65,10 +72,13 @@ LIB_IGNORE = ['XXX']
 
 # Customize user stats display
 # User: USER1 -> 1 hr 32 min 00 sec
-USER_STAT = 'User: {0} -> {1}'
+USER_STAT = '{0} -> {1}'
 
 # Usernames you do not want shown. Logging before exclusion.
 USER_IGNORE = ['User1']
+
+# User stat choices
+STAT_CHOICE = ['duration', 'plays']
 
 # Customize time display
 # {0:d} hr {1:02d} min {2:02d} sec  -->  1 hr 32 min 00 sec
@@ -142,26 +152,35 @@ def daterange(start_date, end_date):
         yield start_date + timedelta(n)
 
 
-def get_user_stats(home_stats):
+def get_user_stats(home_stats, rich, stats_type, notify=None):
     user_stats_lst = []
     user_stats_dict = {}
     print('Checking users stats.')
     for stats in home_stats:
         if stats['stat_id'] == 'top_users':
             for row in stats['rows']:
-                add_to_dictval(user_stats_dict, row['friendly_name'], row['total_duration'])
+                if stats_type == 'duration':
+                    add_to_dictval(user_stats_dict, row['friendly_name'], row['total_duration'])
+                else:
+                    add_to_dictval(user_stats_dict, row['friendly_name'], row['total_plays'])
                 
-    for user, duration in sorted(user_stats_dict.items(), key=itemgetter(1), reverse=True):
+    for user, stat in sorted(user_stats_dict.items(), key=itemgetter(1), reverse=True):
         if user not in USER_IGNORE:
-            user_total = timedelta(seconds=duration)
-            USER_STATS = USER_STAT.format(user, user_total)
-            # Html formatting
-            user_stats_lst += ['<li>{}</li>'.format(USER_STATS)]
+            if stats_type == 'duration':
+                user_total = timedelta(seconds=stat)
+                USER_STATS = USER_STAT.format(user, user_total)
+            else:
+                USER_STATS = USER_STAT.format(user, stat)
+            if rich or not notify:
+                user_stats_lst += ['{}'.format(USER_STATS)]
+            else:
+                # Html formatting
+                user_stats_lst += ['<li>{}</li>'.format(USER_STATS)]
     
     return user_stats_lst
 
 
-def get_library_stats(libraries, tautulli):
+def get_library_stats(libraries, tautulli, rich, notify=None):
     section_count = ''
     total_size = 0
     sections_stats_lst = []
@@ -185,11 +204,17 @@ def get_library_stats(libraries, tautulli):
             section_count = MOVIE_STAT.format(section['count'])
 
         if section['section_name'] not in LIB_IGNORE and section_count:
-            # Html formatting
-            sections_stats_lst += ['<li>{}: {}</li>'.format(section['section_name'], section_count)]
+            if rich or not notify:
+                sections_stats_lst += ['{}: {}'.format(section['section_name'], section_count)]
+            else:
+                # Html formatting
+                sections_stats_lst += ['<li>{}: {}</li>'.format(section['section_name'], section_count)]
 
-    # Html formatting. Adding the Capacity to bottom of list.
-    sections_stats_lst += ['<li>Capacity: {}</li>'.format(sizeof_fmt(total_size))]
+    if rich or not notify:
+        sections_stats_lst += ['Capacity: {}'.format(sizeof_fmt(total_size))]
+    else:
+        # Html formatting. Adding the Capacity to bottom of list.
+        sections_stats_lst += ['<li>Capacity: {}</li>'.format(sizeof_fmt(total_size))]
 
     return sections_stats_lst
 
@@ -292,14 +317,14 @@ class Tautulli:
 
 
 class Notification:
-    def __init__(self, notifier_id, subject, body, tautulli, user=None):
+    def __init__(self, notifier_id, subject, body, tautulli, stats=None):
         self.notifier_id = notifier_id
         self.subject = subject
         self.body = body
 
         self.tautulli = tautulli
-        if user:
-            self.user = user
+        if stats:
+            self.stats = stats
 
     def send(self, subject='', body=''):
         """Send to Tautulli notifier.
@@ -315,7 +340,7 @@ class Notification:
         body = body or self.body
         self.tautulli.notify(notifier_id=self.notifier_id, subject=subject, body=body)
 
-    def send_discord(self, title, color, poster_url, plex_url, message, footer):
+    def send_discord(self, title, color, stat, footer):
         """Build the Discord message.
 
         Parameters
@@ -324,49 +349,25 @@ class Notification:
             The title of the message.
         color : int
             The color of the message
-        poster_url : str
-            The media poster URL.
-        plex_url : str
-            Plex media URL.
-        message : str
-            Message sent to the player.
-        footer : str
-            Footer of the message.
         """
         discord_message = {
             "embeds": [
                 {
                     "author": {
                         "icon_url": TAUTULLI_ICON,
-                        "name": "Tautulli",
-                        "url": TAUTULLI_LINK.rstrip('/')
+                        "name": AUTHOR_NAME,
                     },
                     "color": color,
                     "fields": [
                         {
-                            "inline": True,
-                            "name": "User",
-                            "value": self.user.friendly_name
+                            "name": "{} Stats".format(stat),
+                            "value": "".join(self.stats)
                         },
-                        {
-                            "inline": True,
-                            "name": "Watched",
-                            "value": self.user.stats
-                        },
-                        {
-                            "inline": False,
-                            "name": "Message Sent",
-                            "value": message
-                        }
                     ],
-                    "thumbnail": {
-                        "url": poster_url
-                    },
                     "title": title,
                     "timestamp": utc_now_iso(),
-                    "url": plex_url,
                     "footer": {
-                        "text": footer
+                        "text": " to ".join(x for x in footer)
                     }
 
                 }
@@ -378,7 +379,7 @@ class Notification:
                                      separators=(',', ': '))
         self.send(body=discord_message)
 
-    def send_slack(self, title, color, poster_url, plex_url, message, footer):
+    def send_slack(self, title, color, stat):
         """Build the Slack message.
 
         Parameters
@@ -400,30 +401,17 @@ class Notification:
             "attachments": [
                 {
                     "title": title,
-                    "title_link": plex_url,
                     "author_icon": TAUTULLI_ICON,
-                    "author_name": "Tautulli",
+                    "author_name": AUTHOR_NAME,
                     "author_link": TAUTULLI_LINK.rstrip('/'),
                     "color": color,
                     "fields": [
                         {
-                            "title": "User",
-                            "value": self.user.friendly_name,
+                            "title": "{} Stats".format(stat),
+                            "value": self.stats,
                             "short": True
                         },
-                        {
-                            "title": "Watched",
-                            "value": self.user.stats,
-                            "short": True
-                        },
-                        {
-                            "title": "Message Sent",
-                            "value": message,
-                            "short": False
-                        }
                     ],
-                    "thumb_url": poster_url,
-                    "footer": footer,
                     "ts": time.time()
                 }
 
@@ -443,8 +431,21 @@ if __name__ == '__main__':
                         help='Enter in number of days to go back. \n(default: %(default)s)')
     parser.add_argument('-t', '--top', default=5, metavar='', type=int,
                         help='Enter in number of top users to find. \n(default: %(default)s)')
+    parser.add_argument('--stat', default='duration', choices=STAT_CHOICE,
+                        help='Enter in number of top users to find. \n(default: %(default)s)')
+    parser.add_argument('--notify', type=int,
+                        help='Notification Agent ID number to Agent to '
+                             'send notification.')
+    parser.add_argument('--richMessage', choices=RICH_TYPE,
+                        help='Rich message type selector.\nChoices: (%(choices)s)')
     parser.add_argument('--refresh', action='store_true',
                         help='Refresh all libraries in Tautulli')
+    parser.add_argument('--libraryStats', action='store_true',
+                        help='Only retrieve library stats.')
+    parser.add_argument('--userStats', action='store_true',
+                        help='Only retrieve users stats.')
+    
+    # todo Goals: growth reporting? show library size growth over time?
 
     opts = parser.parse_args()
 
@@ -465,21 +466,48 @@ if __name__ == '__main__':
     dates_range_lst = []
     for single_date in daterange(start_date, end_date):
         dates_range_lst += [single_date.strftime("%Y-%m-%d")]
-
-    libraries = tautulli_server.get_libraries()
-    lib_stats = get_library_stats(libraries, tautulli_server)
-    sections_stats = "\n".join(lib_stats)
-
-    print('Checking user stats from {:02d} days ago.'.format(opts.days))
-    home_stats = tautulli_server.get_home_stats(opts.days, 'duration', opts.top)
-    user_stats_lst = get_user_stats(home_stats)
-    user_stats = "\n".join(user_stats_lst)
-
+        
     end = datetime.strptime(time.ctime(float(TODAY)), "%a %b %d %H:%M:%S %Y").strftime("%a %b %d %Y")
     start = datetime.strptime(time.ctime(float(DAYS_AGO)), "%a %b %d %H:%M:%S %Y").strftime("%a %b %d %Y")
 
-    BODY_TEXT = BODY_TEXT.format(end=end, start=start, sections_stats=sections_stats, user_stats=user_stats)
+    sections_stats = ''
+    if opts.libraryStats or (not opts.libraryStats and not opts.userStats):
+        libraries = tautulli_server.get_libraries()
+        lib_stats = get_library_stats(libraries, tautulli_server, opts.richMessage, opts.notify)
+        sections_stats = "\n".join(lib_stats)
 
-    print('Sending message.')
-    notify = Notification(NOTIFIER_ID, SUBJECT_TEXT, BODY_TEXT, tautulli_server)
-    notify.send()
+    user_stats = ''
+    if opts.userStats or (not opts.libraryStats and not opts.userStats):
+        print('Checking user stats from {:02d} days ago.'.format(opts.days))
+        home_stats = tautulli_server.get_home_stats(opts.days, opts.stat, opts.top)
+        user_stats_lst = get_user_stats(home_stats, opts.richMessage, opts.stat, opts.notify)
+        user_stats = "\n".join(user_stats_lst)
+
+    if opts.notify and opts.richMessage:
+        user_notification = ''
+        if user_stats:
+            user_notification = Notification(opts.notify, None, None, tautulli_server, user_stats)
+        section_notification = ''
+        if sections_stats:
+            section_notification= Notification(opts.notify, None, None, tautulli_server, sections_stats)
+        if opts.richMessage == 'slack':
+            if user_notification:
+                user_notification.send_slack(SUBJECT_TEXT, USERS_COLOR, 'User ' + opts.stat.capitalize())
+            if section_notification:
+                section_notification.send_slack(SUBJECT_TEXT, SECTIONS_COLOR, 'Section')
+        elif opts.richMessage == 'discord':
+            if user_notification:
+                user_notification.send_discord(SUBJECT_TEXT, USERS_COLOR, 'User ' + opts.stat.capitalize(),
+                                               footer=(end,start))
+            if section_notification:
+                section_notification.send_discord(SUBJECT_TEXT, SECTIONS_COLOR, 'Section', footer=(end,start))
+    elif opts.notify and not opts.richMessage:
+        BODY_TEXT = BODY_TEXT.format(end=end, start=start, sections_stats=sections_stats, user_stats=user_stats)
+        print('Sending message.')
+        notify = Notification(opts.notify, SUBJECT_TEXT, BODY_TEXT, tautulli_server)
+        notify.send()
+    else:
+        if sections_stats:
+            print('Section Stats:\n{}'.format(''.join(sections_stats)))
+        if user_stats:
+            print('User {} Stats:\n{}'.format(opts.stat.capitalize(), ''.join(user_stats)))

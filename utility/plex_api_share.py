@@ -167,7 +167,8 @@ def get_ratings_lst(section_id):
 def filter_clean(filter_type):
     clean = ''
     try:
-        clean = dict(item.split("=") for item in filter_type.split("|"))
+        filter_type = filter_type.replace('|', '&')
+        clean = dict(item.split("=") for item in filter_type.split("&"))
         for k, v in clean.items():
             labels = v.replace('%20', ' ')
             labels = labels.split('%2C')
@@ -457,8 +458,10 @@ if __name__ == "__main__":
             kill_session(user, kill)
             time.sleep(3)
             unshare(user, sections_lst)
-        elif opts.unshare:
+        elif opts.unshare and user_shares_lst:
             unshare(user, sections_lst)
+        elif opts.unshare and not user_shares_lst:
+            print('{} has no libraries shared...'.format(user))
         elif kill:
             kill_session(user, kill)
 
